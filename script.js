@@ -1361,17 +1361,46 @@ window.analyzeAccountTakeover = analyzeAccountTakeover;
    DIGITAL IMPERSONATION DETECTION
    ============================================================ */
 
+function getImpersonationSenderType(sender) {
+    const value = String(sender || "").trim();
+
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    const phonePattern = /^\+?[1-9]\d{6,14}$/;
+
+    if (emailPattern.test(value)) return "email";
+
+    const normalizedPhone = value.replace(/[\s()-]/g, "");
+    if (phonePattern.test(normalizedPhone)) return "phone";
+
+    return "";
+}
+
+function normalizeImpersonationPhone(sender) {
+    return String(sender || "")
+        .trim()
+        .replace(/[\s()-]/g, "");
+}
+
 function buildImpersonationMessage(sender, messageText) {
-    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sender);
-    const isPhone = /^\+?[\d\s()-]{7,}$/.test(sender);
+    const rawSender = String(sender || "").trim();
+    const senderType = getImpersonationSenderType(rawSender);
+    const normalizedSender = senderType === "phone"
+        ? normalizeImpersonationPhone(rawSender)
+        : rawSender;
+
+    const senderDomain = senderType === "email"
+        ? normalizedSender.split("@").pop().toLowerCase()
+        : "";
 
     return {
         timestamp: new Date().toISOString(),
         message_id: `msg-${Date.now().toString(36)}`,
-        channel: isEmail ? "email" : isPhone ? "sms" : "",
-        sender_name: sender || "Unknown sender",
-        sender_domain: isEmail ? sender.split("@")[1] : "",
-        message_text: messageText,
+        channel: senderType === "email" ? "email" : "sms",
+        sender_name: normalizedSender,
+        sender_contact: normalizedSender,
+        sender_type: senderType,
+        sender_domain: senderDomain,
+        message_text: String(messageText || "").trim(),
         context: "reported by the organisation"
     };
 }
@@ -1395,11 +1424,11 @@ function initializeDigitalImpersonation() {
     const syncFromFields = () => {
         const sender = senderInput.value.trim();
         const messageText = messageInput.value.trim();
+        const senderType = getImpersonationSenderType(sender);
 
-        state.impersonationMessages =
-            sender && messageText
-                ? [buildImpersonationMessage(sender, messageText)]
-                : null;
+        state.impersonationMessages = senderType && messageText
+            ? [buildImpersonationMessage(sender, messageText)]
+            : null;
 
         updateMessageCount();
         resetImpersonationResult();
@@ -1415,19 +1444,153 @@ function initializeDigitalImpersonation() {
 
 function loadImpersonationDemo() {
     const demoMessages = [
-        {timestamp:"2026-10-03T09:00:00",message_id:"msg001",channel:"sms",sender_name:"Unknown",sender_domain:"",claimed_identity:"Delhi Police Cyber Cell",claimed_role:"police officer",claimed_organisation:"Delhi Police",message_text:"URGENT notice from government of india: a case has been registered against you for money laundering. Your bank account will be frozen within 24 hours. Do not tell anyone about this notice.",context:"employee received on personal mobile"},
-        {timestamp:"2026-10-03T09:30:00",message_id:"msg002",channel:"email",sender_name:"IT Service Desk",sender_domain:"sbi-netbanking-alert.xyz",claimed_identity:"SBI Customer Care",claimed_role:"security officer",claimed_organisation:"State Bank of India",message_text:"Dear valued customer your account will be suspended today. You must confirm your OTP and net banking password immediately or your account will be deactivated. Click here to update KYC now.",context:"vendor reported a bank phishing email"},
-        {timestamp:"2026-10-03T10:00:00",message_id:"msg003",channel:"email",sender_name:"Anil Verma",sender_domain:"",claimed_identity:"",claimed_role:"CEO",claimed_organisation:"",message_text:"This is your CEO. We have a confidential board meeting today. I need you to change the vendor bank details immediately and transfer the advance payment before midnight. Do not discuss this with the finance department.",context:"finance executive received an internal fraud attempt"},
-        {timestamp:"2026-10-03T10:30:00",message_id:"msg004",channel:"sms",sender_name:"Unknown",sender_domain:"",claimed_identity:"Income Tax Department",claimed_role:"tax officer",claimed_organisation:"Income Tax Department",message_text:"Your income tax return is pending and a penalty of 50000 rupees has been imposed. Legal action will be taken if you do not pay immediately. Kindly do not call the department to verify.",context:"staff member reported an SMS scam"},
-        {timestamp:"2026-10-03T11:00:00",message_id:"msg005",channel:"email",sender_name:"HR Admin",sender_domain:"hr-update-portal.top",claimed_identity:"Human Resources",claimed_role:"hr manager",claimed_organisation:"Acme Corporation",message_text:"Attention all employees this is HR. Your salary revision is approved. Share your bank account number and OTP on this secure form to update your payroll records. Click the link below to submit details.",context:"circular email with a lookalike HR portal"},
-        {timestamp:"2026-10-03T11:30:00",message_id:"msg006",channel:"sms",sender_name:"Unknown",sender_domain:"",claimed_identity:"University Examination Cell",claimed_role:"registrar",claimed_organisation:"University Authority",message_text:"Your examination hall ticket is cancelled. Confirm your OTP on http://exam-verify.xyz to reissue the hall ticket before midnight or you will be debarred from the exam.",context:"student reported a verification scam"}
+        {
+            timestamp: "2026-10-03T09:00:00",
+            message_id: "msg001",
+            channel: "email",
+            sender_name: "hr@cyberguard-demo.com",
+            sender_contact: "hr@cyberguard-demo.com",
+            sender_type: "email",
+            sender_domain: "cyberguard-demo.com",
+            claimed_identity: "Priya Sharma",
+            claimed_role: "HR Manager",
+            claimed_organisation: "CyberGuard Technologies",
+            message_text: "This is Priya from HR. Your salary revision has been approved. Please send your employee ID, bank account number and OTP immediately so payroll can complete the update today.",
+            context: "internal employee reported a message claiming to be from HR"
+        },
+        {
+            timestamp: "2026-10-03T09:20:00",
+            message_id: "msg002",
+            channel: "email",
+            sender_name: "finance@cyberguard-demo-support.com",
+            sender_contact: "finance@cyberguard-demo-support.com",
+            sender_type: "email",
+            sender_domain: "cyberguard-demo-support.com",
+            claimed_identity: "Rahul Mehta",
+            claimed_role: "Finance Manager",
+            claimed_organisation: "CyberGuard Technologies",
+            message_text: "Rahul from Finance here. This vendor payment is urgent and must be completed before 4 PM. Please change the beneficiary bank details to the account in the attached invoice and do not wait for normal approval.",
+            context: "accounts employee reported a suspicious finance request"
+        },
+        {
+            timestamp: "2026-10-03T09:45:00",
+            message_id: "msg003",
+            channel: "sms",
+            sender_name: "+919876543210",
+            sender_contact: "+919876543210",
+            sender_type: "phone",
+            sender_domain: "",
+            claimed_identity: "Arjun Nair",
+            claimed_role: "IT Support Lead",
+            claimed_organisation: "CyberGuard Technologies",
+            message_text: "IT Support here. Your company account has been marked for a security review. Send the MFA verification code and current password now so we can restore access before your account is suspended.",
+            context: "employee received a phone message claiming to be internal IT support"
+        },
+        {
+            timestamp: "2026-10-03T10:10:00",
+            message_id: "msg004",
+            channel: "email",
+            sender_name: "ceo-office@cyberguard-demo.com",
+            sender_contact: "ceo-office@cyberguard-demo.com",
+            sender_type: "email",
+            sender_domain: "cyberguard-demo.com",
+            claimed_identity: "Vikram Rao",
+            claimed_role: "CEO",
+            claimed_organisation: "CyberGuard Technologies",
+            message_text: "I am in a confidential board meeting and need this handled immediately. Please arrange the vendor advance payment before noon. Keep this confidential and do not discuss it with Finance until the transfer is complete.",
+            context: "finance employee reported a message claiming to be the CEO"
+        },
+        {
+            timestamp: "2026-10-03T10:35:00",
+            message_id: "msg005",
+            channel: "email",
+            sender_name: "admin@cyberguard-demo-alerts.com",
+            sender_contact: "admin@cyberguard-demo-alerts.com",
+            sender_type: "email",
+            sender_domain: "cyberguard-demo-alerts.com",
+            claimed_identity: "Neha Kapoor",
+            claimed_role: "Administration Manager",
+            claimed_organisation: "CyberGuard Technologies",
+            message_text: "Administration has updated the employee access register. Confirm your employee credentials through the link below immediately or your building and system access will be deactivated today.",
+            context: "employee reported a suspicious administration notice"
+        },
+        {
+            timestamp: "2026-10-03T11:00:00",
+            message_id: "msg006",
+            channel: "sms",
+            sender_name: "+919812345678",
+            sender_contact: "+919812345678",
+            sender_type: "phone",
+            sender_domain: "",
+            claimed_identity: "Sameer Das",
+            claimed_role: "Procurement Manager",
+            claimed_organisation: "CyberGuard Technologies",
+            message_text: "This is Procurement. The purchase order is waiting for your confirmation. Open the verification link and approve the new vendor account immediately so the order is not cancelled.",
+            context: "employee received a phone message claiming to be Procurement"
+        },
+        {
+            timestamp: "2026-10-03T11:25:00",
+            message_id: "msg007",
+            channel: "email",
+            sender_name: "legal@cyberguard-demo.com",
+            sender_contact: "legal@cyberguard-demo.com",
+            sender_type: "email",
+            sender_domain: "cyberguard-demo.com",
+            claimed_identity: "Meera Iyer",
+            claimed_role: "Legal Head",
+            claimed_organisation: "CyberGuard Technologies",
+            message_text: "Legal has received a confidential complaint involving your account. Do not discuss this with colleagues. Send the requested employee records immediately so the matter can be closed before formal proceedings begin.",
+            context: "employee reported a message claiming to be internal Legal"
+        },
+        {
+            timestamp: "2026-10-03T11:50:00",
+            message_id: "msg008",
+            channel: "email",
+            sender_name: "sales@cyberguard-demo-partners.com",
+            sender_contact: "sales@cyberguard-demo-partners.com",
+            sender_type: "email",
+            sender_domain: "cyberguard-demo-partners.com",
+            claimed_identity: "Karan Singh",
+            claimed_role: "Sales Director",
+            claimed_organisation: "CyberGuard Technologies",
+            message_text: "I am travelling with the client and need the latest customer list urgently. Upload the spreadsheet to this external form before the meeting starts. This is a confidential management request.",
+            context: "sales employee reported a suspicious external-domain request"
+        },
+        {
+            timestamp: "2026-10-03T12:15:00",
+            message_id: "msg009",
+            channel: "sms",
+            sender_name: "+919900112233",
+            sender_contact: "+919900112233",
+            sender_type: "phone",
+            sender_domain: "",
+            claimed_identity: "Anita Roy",
+            claimed_role: "CEO Office",
+            claimed_organisation: "CyberGuard Technologies",
+            message_text: "CEO Office request: send the current finance contact list and vendor payment status right now. This is confidential and must be completed before the executive meeting.",
+            context: "employee reported a phone message claiming to be from the CEO office"
+        },
+        {
+            timestamp: "2026-10-03T12:40:00",
+            message_id: "msg010",
+            channel: "email",
+            sender_name: "vendor-support@externalpartner.example",
+            sender_contact: "vendor-support@externalpartner.example",
+            sender_type: "email",
+            sender_domain: "externalpartner.example",
+            claimed_identity: "Rohit Malhotra",
+            claimed_role: "Account Manager",
+            claimed_organisation: "External Vendor",
+            message_text: "Hello, I am the account manager handling CyberGuard Technologies. We have changed our bank details for the next invoice. Please update the beneficiary immediately and confirm the transfer today.",
+            context: "procurement employee reported an external vendor impersonation attempt"
+        }
     ];
 
     state.impersonationMessages = demoMessages;
 
     const senderInput = $("#impersonationSenderInput");
     const messageInput = $("#impersonationMessageInput");
-    const sample = demoMessages[1] || demoMessages[0] || {};
+    const sample = demoMessages[0] || {};
 
     if (senderInput) senderInput.value = sample.sender_name || "";
     if (messageInput) messageInput.value = sample.message_text || "";
@@ -1437,8 +1600,8 @@ function loadImpersonationDemo() {
 
     resetImpersonationResult();
     showToast(
-        "Demo scenario loaded",
-        `${demoMessages.length} reported messages are ready to analyse. Editing either field analyses only that message.`,
+        "Organisation demo loaded",
+        `${demoMessages.length} internal and external organisation impersonation scenarios are ready to analyse.`,
         "success"
     );
 }
@@ -1451,47 +1614,59 @@ async function analyzeDigitalImpersonation() {
         const messageElement = $("#impersonationMessageInput");
         const sender = (senderElement?.value || "").trim();
         const messageText = (messageElement?.value || "").trim();
+        const senderType = getImpersonationSenderType(sender);
 
         if (!sender && !messageText) {
             showToast(
                 "Sender and message required",
-                "Enter the reported sender and paste the message before starting the analysis.",
+                "Enter a valid email address or phone number and paste the message before starting the analysis.",
                 "error"
             );
             senderElement?.focus();
         } else if (!sender) {
             showToast(
                 "Sender required",
-                "Enter the sender name or address before starting the analysis.",
+                "Enter a valid email address or phone number before starting the analysis.",
                 "error"
             );
             senderElement?.focus();
-        } else {
+        } else if (!senderType) {
+            showToast(
+                "Invalid sender",
+                "Sender must be a valid email address or phone number.",
+                "error"
+            );
+            senderElement?.focus();
+        } else if (!messageText) {
             showToast(
                 "Message required",
                 "Paste the reported message before starting the analysis.",
                 "error"
             );
             messageElement?.focus();
+        } else {
+            state.impersonationMessages = [
+                buildImpersonationMessage(sender, messageText)
+            ];
         }
-        return;
+
+        if (!Array.isArray(state.impersonationMessages)) return;
     }
 
     setResultState("impersonation", "PROCESSING");
     showLoading(
         "Analysing impersonation risk",
-        "CyberGuard is checking identity claims, pressure tactics, threats and credential requests."
+        "CyberGuard is checking internal role claims, external contacts, pressure tactics, threats and credential requests."
     );
 
     try {
         const response = await fetch("/api/digital_impersonation", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ messages })
+            body: JSON.stringify({ messages: state.impersonationMessages })
         });
 
         const responseText = await response.text();
-
         let data = null;
 
         try {
@@ -1511,7 +1686,7 @@ async function analyzeDigitalImpersonation() {
         renderImpersonationResult(data);
         addHistoryEntry({
             type: "Digital Impersonation",
-            input: `${messages.length} reported messages`,
+            input: `${state.impersonationMessages.length} reported messages`,
             result: summarizeImpersonation(data)
         });
 
