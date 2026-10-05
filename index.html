@@ -1687,7 +1687,7 @@
                             <div class="eyebrow">THREAT DETECTION / 03</div>
                             <h2>Digital Impersonation Detection</h2>
                             <p>
-                                Analyse reported messages and social content to detect impersonation of government officials, senior management, financial institutions, brands and known contacts.
+                                Analyse reported messages to detect impersonation of people and departments within your organisation, as well as suspicious external contacts pretending to work with the organisation.
                             </p>
                         </div>
 
@@ -1710,19 +1710,19 @@
                             <div class="takeover-info">
                                 <span class="takeover-info-icon">i</span>
                                 <p>
-                                    Enter the sender of a reported message and paste its text. CyberGuard checks six impersonation indicators: authority spoofing, executive impersonation, brand impersonation, urgency and pressure tactics, threatening language and credential harvesting.
+                                    Enter the reported sender's email address or phone number and paste its message. CyberGuard checks six impersonation indicators across internal roles such as HR, Finance, IT, Administration and Management, plus suspicious external contacts.
                                 </p>
                             </div>
 
                             <div class="field">
                                 <div class="field-label-row">
-                                    <label for="impersonationSenderInput">SENDER — NAME OR ADDRESS</label>
+                                    <label for="impersonationSenderInput">SENDER — EMAIL OR PHONE NUMBER</label>
                                 </div>
 
                                 <input
                                     type="text"
                                     id="impersonationSenderInput"
-                                    placeholder="e.g. IT Service Desk, +91 98765 43210, alerts@secure-login.xyz"
+                                    placeholder="e.g. hr@cyberguard-demo.com or +91 98765 43210"
                                     autocomplete="off"
                                     spellcheck="false"
                                 >
@@ -1762,7 +1762,7 @@
                             <div class="result-empty" id="impersonationResultEmpty">
                                 <div class="empty-icon">◌</div>
                                 <h4>No messages analysed</h4>
-                                <p>Enter a sender and message to generate an impersonation assessment.</p>
+                                <p>Enter a valid email address or phone number and a message to generate an impersonation assessment.</p>
                             </div>
 
                             <div class="takeover-result-content hidden" id="impersonationResultContent">
@@ -1822,7 +1822,7 @@
                         <div class="scope-note-icon">i</div>
                         <div>
                             <strong>Reported messages stay the input</strong>
-                            <p>The module analyses the message content reported by the organisation. It does not require an impersonation label; it derives detections and risk from the message text, claimed identity and sender context.</p>
+                            <p>The module analyses messages reported by the organisation. It is designed around organisation-specific impersonation: HR, Finance, IT, Administration, Management and other internal roles, plus external contacts such as vendors. It derives detections and risk from the message text, claimed identity and sender context.</p>
                         </div>
                     </div>
 
