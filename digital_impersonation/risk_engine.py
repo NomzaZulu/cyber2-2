@@ -15,11 +15,11 @@ HIGH_THRESHOLD = 70
 
 DETECTOR_WEIGHTS = {
     "Authority Impersonation": 24,
-    "Executive Impersonation": 20,
-    "Brand Impersonation": 18,
-    "Urgency & Pressure Tactics": 16,
-    "Threatening Or Extortion Language": 20,
-    "Credential Harvesting Via Impersonation": 26
+    "Executive Impersonation": 21,
+    "Brand Impersonation": 20,
+    "Urgency & Pressure Tactics": 12,
+    "Threatening Or Extortion Language": 19,
+    "Credential Harvesting Via Impersonation": 28
 }
 
 
@@ -160,7 +160,13 @@ def calculate_detector_score(
         )
 
         if "carries no part" in reason_text:
-            evidence_bonus += 5
+            evidence_bonus += 10
+
+        if "free-mail domain" in reason_text:
+            evidence_bonus += 8
+
+        if "commonly abused TLD" in reason_text:
+            evidence_bonus += 4
 
     # --------------------------------------------------------
     # URGENCY & PRESSURE
@@ -176,13 +182,18 @@ def calculate_detector_score(
         )
 
         if signals >= 4:
-            evidence_bonus += 10
+            evidence_bonus += 8
 
         elif signals >= 2:
-            evidence_bonus += 6
+            evidence_bonus += 5
 
         elif signals >= 1:
-            evidence_bonus += 3
+            evidence_bonus += 2
+
+        if "blocks verification" in str(
+            detection.get("reasons", "")
+        ):
+            evidence_bonus += 5
 
     # --------------------------------------------------------
     # THREATENING LANGUAGE
@@ -336,6 +347,28 @@ def calculate_correlation_bonus(
         reasons.append(
             "Credential request paired with threats or urgency "
             "to prevent verification"
+        )
+
+    if (
+        has_credentials
+        and "Urgency & Pressure Tactics" in threat_set
+    ):
+
+        bonus += 8
+
+        reasons.append(
+            "Credential request combined with explicit urgency"
+        )
+
+    if (
+        has_credentials
+        and "Threatening Or Extortion Language" in threat_set
+    ):
+
+        bonus += 6
+
+        reasons.append(
+            "Credential request combined with threatening language"
         )
 
     # --------------------------------------------------------
@@ -596,6 +629,13 @@ def build_risk_report(
                     f"({signals} indicator(s))"
                 )
 
+                if "blocks verification" in str(
+                    detection.get("reasons", "")
+                ):
+                    evidence_reasons.append(
+                        "Sender explicitly attempted to block independent verification"
+                    )
+
             elif threat == "Threatening Or Extortion Language":
 
                 signals = safe_int(
@@ -623,6 +663,13 @@ def build_risk_report(
                     f"Sensitive information requested from the "
                     f"recipient ({credentials} credential indicator(s))"
                 )
+
+                if "Verification-blocking language detected" in str(
+                    detection.get("reasons", "")
+                ):
+                    evidence_reasons.append(
+                        "Credential request was paired with verification-blocking language"
+                    )
 
         # ====================================================
         # BASE SCORE
