@@ -1,411 +1,262 @@
+import re
+
 import pandas as pd
 
 
 # ============================================================
-# RISK LEVEL THRESHOLDS
+# DIGITAL IMPERSONATION RISK ENGINE
+# ============================================================
+# The public six-detector interface is preserved.
+# Risk is now based on detector evidence + context correlation.
+# The engine additionally returns:
+#   - attack_category
+#   - confidence
+#   - confidence_score
+#   - sender_authenticity
+#   - dangerous_action
+#   - evidence chain
 # ============================================================
 
 LOW_THRESHOLD = 30
 HIGH_THRESHOLD = 70
 
-
-# ============================================================
-# DETECTOR BASE WEIGHTS
-# ============================================================
-
 DETECTOR_WEIGHTS = {
-    "Authority Impersonation": 24,
+    "Authority Impersonation": 23,
     "Executive Impersonation": 21,
     "Brand Impersonation": 20,
     "Urgency & Pressure Tactics": 12,
     "Threatening Or Extortion Language": 19,
-    "Credential Harvesting Via Impersonation": 28
+    "Credential Harvesting Via Impersonation": 28,
+}
+
+IDENTITY_THREATS = {
+    "Authority Impersonation",
+    "Executive Impersonation",
+    "Brand Impersonation",
+}
+
+PRESSURE_THREATS = {
+    "Urgency & Pressure Tactics",
+    "Threatening Or Extortion Language",
 }
 
 
-# ============================================================
-# HELPERS
-# ============================================================
-
 def safe_int(value, default=0):
-
     try:
         if pd.isna(value):
             return default
-
         return int(float(value))
-
     except Exception:
         return default
 
 
-def normalise_detection(
-    dataframe,
-    threat_name
-):
+def safe_float(value, default=0.0):
+    try:
+        if pd.isna(value):
+            return default
+        return float(value)
+    except Exception:
+        return default
 
-    if dataframe is None:
+
+def normalise_detection(dataframe, threat_name):
+    if dataframe is None or not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
         return pd.DataFrame()
-
-    if not isinstance(
-        dataframe,
-        pd.DataFrame
-    ):
-        return pd.DataFrame()
-
-    if dataframe.empty:
-        return pd.DataFrame()
-
     df = dataframe.copy()
-
     if "message_id" not in df.columns:
         return pd.DataFrame()
-
     df["threat"] = threat_name
-
     return df
 
 
-# ============================================================
-# INDIVIDUAL DETECTOR SCORE
-# ============================================================
-
-def calculate_detector_score(
-    threat,
-    detection
-):
-
-    base_score = DETECTOR_WEIGHTS.get(
-        threat,
-        10
-    )
-
-    evidence_bonus = 0
-
-    # --------------------------------------------------------
-    # AUTHORITY IMPERSONATION
-    # --------------------------------------------------------
+def calculate_detector_score(threat, detection):
+    base = DETECTOR_WEIGHTS.get(threat, 10)
+    bonus = 0
 
     if threat == "Authority Impersonation":
-
-        signals = safe_int(
-            detection.get(
-                "authority_signals",
-                0
-            )
-        )
-
-        if signals >= 5:
-            evidence_bonus += 12
-
-        elif signals >= 3:
-            evidence_bonus += 8
-
-        elif signals >= 2:
-            evidence_bonus += 4
-
-    # --------------------------------------------------------
-    # EXECUTIVE IMPERSONATION
-    # --------------------------------------------------------
+        signals = safe_int(detection.get("authority_signals"))
+        bonus += 12 if signals >= 5 else 8 if signals >= 3 else 4 if signals >= 2 else 0
 
     elif threat == "Executive Impersonation":
-
-        signals = safe_int(
-            detection.get(
-                "executive_signals",
-                0
-            )
-        )
-
-        if signals >= 3:
-            evidence_bonus += 10
-
-        elif signals >= 2:
-            evidence_bonus += 6
-
-        elif signals >= 1:
-            evidence_bonus += 3
-
-    # --------------------------------------------------------
-    # BRAND IMPERSONATION
-    # --------------------------------------------------------
+        signals = safe_int(detection.get("executive_signals"))
+        bonus += 10 if signals >= 3 else 6 if signals >= 2 else 3 if signals >= 1 else 0
 
     elif threat == "Brand Impersonation":
-
-        signals = safe_int(
-            detection.get(
-                "brand_signals",
-                0
-            )
-        )
-
-        if signals >= 3:
-            evidence_bonus += 8
-
-        elif signals >= 2:
-            evidence_bonus += 5
-
-        # A lookalike sender domain is strong evidence on
-        # its own because the claimed affiliation does not
-        # appear in the actual sending infrastructure. A
-        # domain that merely exists proves nothing, so the
-        # bonus is gated on the detector's own lookalike
-        # finding rather than on domain presence.
-
-        reason_text = str(
-            detection.get(
-                "reasons",
-                ""
-            )
-        )
-
-        if "carries no part" in reason_text:
-            evidence_bonus += 10
-
-        if "free-mail domain" in reason_text:
-            evidence_bonus += 8
-
-        if "commonly abused TLD" in reason_text:
-            evidence_bonus += 4
-
-    # --------------------------------------------------------
-    # URGENCY & PRESSURE
-    # --------------------------------------------------------
+        signals = safe_int(detection.get("brand_signals"))
+        bonus += 8 if signals >= 4 else 6 if signals >= 3 else 4 if signals >= 2 else 0
+        authenticity = safe_float(detection.get("sender_authenticity"), 50)
+        if authenticity < 30:
+            bonus += 12
+        elif authenticity < 45:
+            bonus += 7
 
     elif threat == "Urgency & Pressure Tactics":
-
-        signals = safe_int(
-            detection.get(
-                "urgency_signals",
-                0
-            )
-        )
-
-        if signals >= 4:
-            evidence_bonus += 8
-
-        elif signals >= 2:
-            evidence_bonus += 5
-
-        elif signals >= 1:
-            evidence_bonus += 2
-
-        if "blocks verification" in str(
-            detection.get("reasons", "")
-        ):
-            evidence_bonus += 5
-
-    # --------------------------------------------------------
-    # THREATENING LANGUAGE
-    # --------------------------------------------------------
+        signals = safe_int(detection.get("urgency_signals"))
+        blocking = safe_int(detection.get("verification_blocking_signals"))
+        bonus += 8 if signals >= 4 else 5 if signals >= 2 else 2 if signals else 0
+        if blocking:
+            bonus += min(8, blocking * 3)
 
     elif threat == "Threatening Or Extortion Language":
-
-        signals = safe_int(
-            detection.get(
-                "threat_signals",
-                0
-            )
-        )
-
-        if signals >= 3:
-            evidence_bonus += 12
-
-        elif signals >= 2:
-            evidence_bonus += 7
-
-        elif signals >= 1:
-            evidence_bonus += 3
-
-    # --------------------------------------------------------
-    # CREDENTIAL HARVESTING
-    # --------------------------------------------------------
+        signals = safe_int(detection.get("threat_signals"))
+        bonus += 12 if signals >= 3 else 7 if signals >= 2 else 3 if signals else 0
 
     elif threat == "Credential Harvesting Via Impersonation":
+        credentials = safe_int(detection.get("credential_signals"))
+        redirects = safe_int(detection.get("redirect_signals"))
+        blocking = safe_int(detection.get("verification_blocking_signals"))
+        bonus += 10 if credentials >= 2 else 6 if credentials else 0
+        if redirects:
+            bonus += min(10, redirects * 5)
+        if blocking:
+            bonus += 6
 
-        credentials = safe_int(
-            detection.get(
-                "credential_signals",
-                0
-            )
-        )
-
-        redirects = safe_int(
-            detection.get(
-                "redirect_signals",
-                0
-            )
-        )
-
-        if credentials >= 2:
-            evidence_bonus += 10
-
-        elif credentials >= 1:
-            evidence_bonus += 6
-
-        # Sending a victim to an attacker-controlled link is
-        # the highest-value credential theft path, so a
-        # redirect outranks the raw keyword count.
-
-        if redirects >= 1:
-            evidence_bonus += 10
-
-    return base_score + evidence_bonus
+    return base + bonus
 
 
-# ============================================================
-# REPETITION BONUS
-# ============================================================
-
-def calculate_repetition_bonus(
-    count
-):
-
+def calculate_repetition_bonus(count):
     if count >= 5:
         return 8
-
     if count >= 3:
         return 5
-
     if count >= 2:
         return 3
-
     return 0
 
 
-# ============================================================
-# CORRELATION BONUS
-#
-# Impersonation attempts are far more dangerous when a
-# message combines identity, pressure and a request for
-# secrets. These combinations are scored explicitly.
-# ============================================================
+def _has_phrase(reasons, phrase):
+    return phrase.lower() in str(reasons or "").lower()
 
-def calculate_correlation_bonus(
-    threats
-):
 
+def _dangerous_action_from_events(events):
+    values = [str(v).upper() for v in events.get("dangerous_action", pd.Series(dtype=str)).dropna().tolist()]
+    if "DANGEROUS" in values:
+        return "DANGEROUS"
+    if "SUSPICIOUS" in values:
+        return "SUSPICIOUS"
+    return "SAFE"
+
+
+def _sender_authenticity_from_events(events):
+    values = []
+    if "sender_authenticity" in events.columns:
+        for value in events["sender_authenticity"].dropna().tolist():
+            number = safe_float(value, -1)
+            if number >= 0:
+                values.append(number)
+    return min(values) if values else 50
+
+
+def _attack_category(threats, dangerous_action, sender_authenticity, events):
+    threat_set = set(threats)
+    text = " ".join(str(v) for v in events.get("reasons", pd.Series(dtype=str)).dropna().tolist()).lower()
+
+    has_exec = "Executive Impersonation" in threat_set
+    has_finance = any(term in text for term in [
+        "financial", "vendor", "beneficiary", "gift card", "payment", "bank details", "payroll"
+    ])
+    has_credentials = "Credential Harvesting Via Impersonation" in threat_set
+    has_pressure = bool(threat_set & PRESSURE_THREATS)
+    has_authority = "Authority Impersonation" in threat_set
+    has_brand = "Brand Impersonation" in threat_set
+
+    if has_exec and has_finance and (has_pressure or has_credentials or dangerous_action == "DANGEROUS"):
+        return "Business Email Compromise"
+    if has_credentials and has_pressure:
+        return "Account Verification / Credential Scam"
+    if has_authority and (has_pressure or has_credentials):
+        return "Authority Impersonation Scam"
+    if has_exec and has_credentials:
+        return "Executive Impersonation / Credential Theft"
+    if has_brand and sender_authenticity < 45:
+        return "Brand / Organisation Spoofing"
+    if has_credentials:
+        return "Credential Harvesting"
+    if has_exec:
+        return "Executive Impersonation"
+    if has_authority:
+        return "Authority Impersonation"
+    if has_brand:
+        return "Brand Impersonation"
+    if has_pressure:
+        return "Social Engineering / Pressure Tactics"
+    return "Suspicious Communication"
+
+
+def _confidence_score(threats, detector_scores, correlation_bonus, sender_authenticity, dangerous_action, events):
+    # Confidence measures agreement/quality of evidence, not severity.
+    independent = min(len(set(threats)), 6)
+    score = 35 + independent * 8
+    if dangerous_action == "DANGEROUS":
+        score += 15
+    elif dangerous_action == "SUSPICIOUS":
+        score += 6
+    if correlation_bonus >= 12:
+        score += 8
+    elif correlation_bonus >= 8:
+        score += 5
+    if sender_authenticity < 30:
+        score += 8
+    elif sender_authenticity < 45:
+        score += 4
+
+    # Explicit evidence phrases add confidence; vague keyword-only hits do not.
+    evidence_count = sum(
+        1 for value in events.get("reasons", pd.Series(dtype=str)).dropna().tolist()
+        if len(str(value)) > 30
+    )
+    score += min(10, evidence_count * 2)
+    return max(0, min(int(score), 99))
+
+
+def calculate_correlation_bonus(threats, events=None):
+    threat_set = set(threats)
     bonus = 0
-
     reasons = []
 
-    threat_set = set(threats)
-
-    # --------------------------------------------------------
-    # IDENTITY + PRESSURE
-    # --------------------------------------------------------
-
-    identity_threats = {
-        "Authority Impersonation",
-        "Executive Impersonation",
-        "Brand Impersonation"
-    }
-
-    pressure_threats = {
-        "Urgency & Pressure Tactics",
-        "Threatening Or Extortion Language"
-    }
-
-    has_identity = bool(
-        threat_set & identity_threats
-    )
-
-    has_pressure = bool(
-        threat_set & pressure_threats
-    )
-
-    has_credentials = (
-        "Credential Harvesting Via Impersonation"
-        in threat_set
-    )
+    has_identity = bool(threat_set & IDENTITY_THREATS)
+    has_pressure = bool(threat_set & PRESSURE_THREATS)
+    has_credentials = "Credential Harvesting Via Impersonation" in threat_set
 
     if has_identity and has_pressure:
-
         bonus += 8
-
-        reasons.append(
-            "Trusted identity combined with pressure tactics"
-        )
-
-    # --------------------------------------------------------
-    # CREDENTIAL REQUEST = HIGHEST RISK COMBINATION
-    # --------------------------------------------------------
+        reasons.append("Trusted-identity claim combined with pressure tactics")
 
     if has_credentials and has_identity:
-
         bonus += 12
-
-        reasons.append(
-            "Credential request delivered through a claimed "
-            "trusted identity"
-        )
+        reasons.append("Credential request delivered through a claimed trusted identity")
 
     if has_credentials and has_pressure:
-
         bonus += 8
+        reasons.append("Credential request paired with urgency or coercion")
 
-        reasons.append(
-            "Credential request paired with threats or urgency "
-            "to prevent verification"
-        )
+    if events is not None:
+        dangerous = _dangerous_action_from_events(events)
+        blocking = 0
+        if "verification_blocking_signals" in events.columns:
+            blocking = sum(safe_int(v) for v in events["verification_blocking_signals"].dropna())
 
-    if (
-        has_credentials
-        and "Urgency & Pressure Tactics" in threat_set
-    ):
+        if dangerous == "DANGEROUS" and has_identity:
+            bonus += 8
+            reasons.append("Trusted identity is used to request a dangerous action")
 
-        bonus += 8
+        if blocking and (has_identity or has_credentials):
+            bonus += 6
+            reasons.append("Sender attempts to prevent independent verification")
 
-        reasons.append(
-            "Credential request combined with explicit urgency"
-        )
+        if "Brand Impersonation" in threat_set:
+            authenticity = _sender_authenticity_from_events(events)
+            if authenticity < 35 and (has_pressure or has_credentials):
+                bonus += 6
+                reasons.append("Low sender authenticity reinforces the impersonation signal")
 
-    if (
-        has_credentials
-        and "Threatening Or Extortion Language" in threat_set
-    ):
-
-        bonus += 6
-
-        reasons.append(
-            "Credential request combined with threatening language"
-        )
-
-    # --------------------------------------------------------
-    # FULL ATTACK CHAIN
-    # --------------------------------------------------------
-
-    if has_credentials and has_identity and has_pressure:
-
+    # Full social-engineering chain: identity + pressure + credential/dangerous action.
+    if has_identity and has_pressure and (has_credentials or (events is not None and _dangerous_action_from_events(events) == "DANGEROUS")):
         bonus += 10
-
-        reasons.append(
-            "Complete impersonation attack chain: identity, "
-            "pressure and credential request"
-        )
-
-    # --------------------------------------------------------
-    # EXECUTIVE + FINANCIAL DATA
-    # --------------------------------------------------------
-
-    if (
-        "Executive Impersonation" in threat_set
-        and has_credentials
-    ):
-
-        bonus += 6
-
-        reasons.append(
-            "Executive impersonation combined with a "
-            "credential request"
-        )
+        reasons.append("Full attack chain: identity + pressure + dangerous request")
 
     return bonus, reasons
 
-
-# ============================================================
-# BUILD RISK REPORT
-# ============================================================
 
 def build_risk_report(
     authority_results,
@@ -413,442 +264,131 @@ def build_risk_report(
     brand_results,
     urgency_results,
     threat_results,
-    credential_results
+    credential_results,
 ):
-
-    # ========================================================
-    # NORMALISE ALL DETECTORS
-    # ========================================================
-
     detector_frames = [
-
-        normalise_detection(
-            authority_results,
-            "Authority Impersonation"
-        ),
-
-        normalise_detection(
-            executive_results,
-            "Executive Impersonation"
-        ),
-
-        normalise_detection(
-            brand_results,
-            "Brand Impersonation"
-        ),
-
-        normalise_detection(
-            urgency_results,
-            "Urgency & Pressure Tactics"
-        ),
-
-        normalise_detection(
-            threat_results,
-            "Threatening Or Extortion Language"
-        ),
-
-        normalise_detection(
-            credential_results,
-            "Credential Harvesting Via Impersonation"
-        )
+        normalise_detection(authority_results, "Authority Impersonation"),
+        normalise_detection(executive_results, "Executive Impersonation"),
+        normalise_detection(brand_results, "Brand Impersonation"),
+        normalise_detection(urgency_results, "Urgency & Pressure Tactics"),
+        normalise_detection(threat_results, "Threatening Or Extortion Language"),
+        normalise_detection(credential_results, "Credential Harvesting Via Impersonation"),
     ]
-
-    detector_frames = [
-        df
-        for df in detector_frames
-        if not df.empty
-    ]
-
-    # ========================================================
-    # NOTHING DETECTED
-    # ========================================================
+    detector_frames = [frame for frame in detector_frames if not frame.empty]
 
     if not detector_frames:
-
         return (
-
-            pd.DataFrame(
-                columns=[
-                    "message_id",
-                    "risk_score",
-                    "risk_level",
-                    "detector_count",
-                    "detectors_triggered",
-                    "reasons"
-                ]
-            ),
-
+            pd.DataFrame(columns=[
+                "message_id", "risk_score", "risk_level", "detector_count", "detectors_triggered",
+                "attack_category", "confidence", "confidence_score", "sender_authenticity",
+                "dangerous_action", "reasons"
+            ]),
             pd.DataFrame()
         )
 
-    # ========================================================
-    # COMBINE DETECTIONS
-    # ========================================================
-
-    combined = pd.concat(
-        detector_frames,
-        ignore_index=True,
-        sort=False
-    )
-
+    combined = pd.concat(detector_frames, ignore_index=True, sort=False)
     reports = []
+    details = []
 
-    detection_details = []
+    for message_id, message_events in combined.groupby("message_id"):
+        unique_detections = message_events.drop_duplicates(subset=["threat"])
+        threats = unique_detections["threat"].tolist()
+        detector_scores = [
+            calculate_detector_score(row["threat"], row)
+            for _, row in unique_detections.iterrows()
+        ]
 
-    for message_id, message_events in combined.groupby(
-        "message_id"
-    ):
+        sorted_scores = sorted(detector_scores, reverse=True)
+        multipliers = [1.00, 0.85, 0.70, 0.50, 0.35, 0.20]
+        weighted_score = sum(score * multipliers[i] for i, score in enumerate(sorted_scores))
 
-        # ====================================================
-        # COUNT DETECTOR OCCURRENCES
-        # ====================================================
-
-        detector_counts = (
-            message_events[
-                "threat"
-            ]
-            .value_counts()
-            .to_dict()
-        )
-
-        unique_detections = (
-            message_events
-            .drop_duplicates(
-                subset=["threat"]
-            )
-        )
-
-        threats = (
-            unique_detections[
-                "threat"
-            ]
-            .tolist()
-        )
-
-        detector_scores = []
-
+        detector_counts = message_events["threat"].value_counts().to_dict()
+        repetition_bonus = 0
         evidence_reasons = []
 
-        for _, detection in (
-            unique_detections.iterrows()
-        ):
-
-            threat = detection[
-                "threat"
-            ]
-
-            score_data = (
-                calculate_detector_score(
-                    threat,
-                    detection
-                )
-            )
-
-            detector_scores.append(
-                score_data
-            )
-
-            # ================================================
-            # HUMAN-READABLE EVIDENCE
-            # ================================================
-
-            if threat == "Authority Impersonation":
-
-                signals = safe_int(
-                    detection.get(
-                        "authority_signals",
-                        0
-                    )
-                )
-
-                evidence_reasons.append(
-                    f"Message impersonates an authority or "
-                    f"regulator ({signals} indicator(s))"
-                )
-
-            elif threat == "Executive Impersonation":
-
-                role = str(
-                    detection.get(
-                        "claimed_role",
-                        "senior role"
-                    )
-                )
-
-                evidence_reasons.append(
-                    f"Sender claims a senior role: {role}"
-                )
-
-            elif threat == "Brand Impersonation":
-
-                organisation = str(
-                    detection.get(
-                        "claimed_organisation",
-                        "unknown organisation"
-                    )
-                )
-
-                evidence_reasons.append(
-                    f"Message impersonates organisation: "
-                    f"{organisation}"
-                )
-
-                domain = str(
-                    detection.get(
-                        "sender_domain",
-                        ""
-                    )
-                ).strip()
-
-                if (
-                    domain
-                    and "carries no part"
-                    in str(
-                        detection.get(
-                            "reasons",
-                            ""
-                        )
-                    )
-                ):
-                    evidence_reasons.append(
-                        f"Sending domain does not match the "
-                        f"claimed organisation: {domain}"
-                    )
-
-            elif threat == "Urgency & Pressure Tactics":
-
-                signals = safe_int(
-                    detection.get(
-                        "urgency_signals",
-                        0
-                    )
-                )
-
-                evidence_reasons.append(
-                    f"High-pressure language used to force action "
-                    f"({signals} indicator(s))"
-                )
-
-                if "blocks verification" in str(
-                    detection.get("reasons", "")
-                ):
-                    evidence_reasons.append(
-                        "Sender explicitly attempted to block independent verification"
-                    )
-
-            elif threat == "Threatening Or Extortion Language":
-
-                signals = safe_int(
-                    detection.get(
-                        "threat_signals",
-                        0
-                    )
-                )
-
-                evidence_reasons.append(
-                    f"Threatening or coercive language detected "
-                    f"({signals} indicator(s))"
-                )
-
-            elif threat == "Credential Harvesting Via Impersonation":
-
-                credentials = safe_int(
-                    detection.get(
-                        "credential_signals",
-                        0
-                    )
-                )
-
-                evidence_reasons.append(
-                    f"Sensitive information requested from the "
-                    f"recipient ({credentials} credential indicator(s))"
-                )
-
-                if "Verification-blocking language detected" in str(
-                    detection.get("reasons", "")
-                ):
-                    evidence_reasons.append(
-                        "Credential request was paired with verification-blocking language"
-                    )
-
-        # ====================================================
-        # BASE SCORE
-        # ====================================================
-
-        base_score = sum(
-            detector_scores
-        )
-
-        # ====================================================
-        # CORRELATION BONUS
-        # ====================================================
-
-        (
-            correlation_bonus,
-            correlation_reasons
-        ) = calculate_correlation_bonus(
-            threats
-        )
-
-        # ====================================================
-        # DIMINISHING RETURNS
-        # ====================================================
-
-        sorted_scores = sorted(
-            detector_scores,
-            reverse=True
-        )
-
-        weighted_score = 0
-
-        for index, score in enumerate(
-            sorted_scores
-        ):
-
-            if index == 0:
-                multiplier = 1.00
-
-            elif index == 1:
-                multiplier = 0.85
-
-            elif index == 2:
-                multiplier = 0.70
-
-            elif index == 3:
-                multiplier = 0.50
-
-            elif index == 4:
-                multiplier = 0.35
-
-            else:
-                multiplier = 0.20
-
-            weighted_score += (
-                score *
-                multiplier
-            )
-
-        # ====================================================
-        # REPETITION BONUS
-        # ====================================================
-
-        repetition_bonus = 0
-
-        for threat, count in (
-            detector_counts.items()
-        ):
-
-            bonus = calculate_repetition_bonus(
-                count
-            )
-
+        for threat, count in detector_counts.items():
+            bonus = calculate_repetition_bonus(count)
             repetition_bonus += bonus
+            if bonus:
+                evidence_reasons.append(f"{threat} detected {count} time(s); repeated evidence adds {bonus} risk points")
 
-            if bonus > 0:
+        correlation_bonus, correlation_reasons = calculate_correlation_bonus(threats, message_events)
+        dangerous_action = _dangerous_action_from_events(message_events)
+        sender_authenticity = _sender_authenticity_from_events(message_events)
+        attack_category = _attack_category(threats, dangerous_action, sender_authenticity, message_events)
 
-                evidence_reasons.append(
-                    f"{threat} detected {count} times; "
-                    f"repeated evidence adds {bonus} risk points"
-                )
+        # Action severity is additive, but only when the action is corroborated
+        # by an identity/pressure/credential signal.
+        action_bonus = 0
+        if dangerous_action == "DANGEROUS":
+            action_bonus = 8 if (set(threats) & IDENTITY_THREATS or set(threats) & PRESSURE_THREATS) else 3
+            evidence_reasons.append("Dangerous requested action materially increases risk")
+        elif dangerous_action == "SUSPICIOUS":
+            action_bonus = 3
 
-        # ====================================================
-        # COMBINE SCORE
-        # ====================================================
+        raw_score = weighted_score + correlation_bonus + repetition_bonus + action_bonus
 
-        raw_score = (
-            weighted_score
-            + correlation_bonus
-            + repetition_bonus
-        )
+        if sender_authenticity < 30 and (set(threats) & IDENTITY_THREATS):
+            raw_score += 5
+            evidence_reasons.append("Very low sender authenticity reinforces the identity mismatch")
 
-        # ====================================================
-        # STRONG EVIDENCE ADJUSTMENT
-        # ====================================================
+        risk_score = min(int(round(raw_score)), 100)
 
-        strong_signals = 0
-
-        if (
-            "Authority Impersonation"
-            in threats
-        ):
-            strong_signals += 1
-
-        if (
-            "Credential Harvesting Via Impersonation"
-            in threats
-        ):
-            strong_signals += 1
-
-        if (
-            "Threatening Or Extortion Language"
-            in threats
-        ):
-            strong_signals += 1
-
-        if strong_signals >= 3:
-
-            raw_score += 8
-
-            evidence_reasons.append(
-                "Multiple strong impersonation signals detected"
-            )
-
-        # ====================================================
-        # CAP SCORE
-        # ====================================================
-
-        risk_score = min(
-            int(raw_score),
-            100
-        )
-
-        # ====================================================
-        # RISK LEVEL
-        # ====================================================
+        # Avoid high risk from a single weak identity/urgency keyword.
+        if len(threats) == 1 and risk_score >= HIGH_THRESHOLD:
+            weak_only = dangerous_action != "DANGEROUS" and sender_authenticity >= 45
+            if weak_only:
+                risk_score = 69
+                evidence_reasons.append("High-risk threshold suppressed because evidence is not independently corroborated")
 
         if risk_score >= HIGH_THRESHOLD:
             risk_level = "HIGH"
-
         elif risk_score >= LOW_THRESHOLD:
             risk_level = "MEDIUM"
-
         else:
             risk_level = "LOW"
 
-        reports.append({
+        confidence_score = _confidence_score(
+            threats,
+            detector_scores,
+            correlation_bonus,
+            sender_authenticity,
+            dangerous_action,
+            message_events,
+        )
+        confidence = "HIGH" if confidence_score >= 75 else "MEDIUM" if confidence_score >= 55 else "LOW"
 
+        # ====================================================
+        # EXPLAINABLE EVIDENCE CHAIN
+        # ====================================================
+        for _, detection in unique_detections.iterrows():
+            threat = detection["threat"]
+            reasons = str(detection.get("reasons", "")).strip()
+            if reasons:
+                evidence_reasons.extend([part.strip() for part in reasons.split("|") if part.strip()])
+
+            if threat == "Brand Impersonation":
+                auth = detection.get("sender_authenticity")
+                if auth is not None:
+                    evidence_reasons.append(f"Sender authenticity score: {safe_float(auth, 50):.0f}/100")
+
+        evidence_reasons = list(dict.fromkeys(evidence_reasons + correlation_reasons))
+
+        reports.append({
             "message_id": str(message_id),
             "risk_score": risk_score,
             "risk_level": risk_level,
             "detector_count": len(threats),
-            "detectors_triggered":
-                ", ".join(threats),
-            "reasons":
-                " | ".join(
-                    evidence_reasons
-                    + correlation_reasons
-                )
+            "detectors_triggered": ", ".join(threats),
+            "attack_category": attack_category,
+            "confidence": confidence,
+            "confidence_score": confidence_score,
+            "sender_authenticity": int(round(sender_authenticity)),
+            "dangerous_action": dangerous_action,
+            "reasons": " | ".join(evidence_reasons),
         })
 
-        # ====================================================
-        # TECHNICAL DETECTION DETAILS
-        # ====================================================
-
         for _, detection in message_events.iterrows():
+            details.append(detection.to_dict())
 
-            detection_details.append(
-                detection.to_dict()
-            )
-
-    # ========================================================
-    # RETURN DATAFRAMES
-    # ========================================================
-
-    return (
-
-        pd.DataFrame(reports),
-
-        pd.DataFrame(
-            detection_details
-        )
-    )
+    return pd.DataFrame(reports), pd.DataFrame(details)
